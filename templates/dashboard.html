@@ -1,0 +1,136 @@
+{% extends "base.html" %}
+{% block content %}
+<header class="topbar">
+  <div>
+    <p class="eyebrow">SECURITY OPERATIONS</p>
+    <h1>Cyber Attack Detection</h1>
+    <p class="muted">Manual request/log analysis · Rules + heuristic anomaly indicators</p>
+  </div>
+  <div class="top-actions">
+    <a class="button secondary" href="{{ url_for('export_csv') }}">Export CSV</a>
+    <form method="post" action="{{ url_for('logout') }}">
+      <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+      <button class="button secondary" type="submit">Logout</button>
+    </form>
+  </div>
+</header>
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}<div class="flash-stack">{% for category, message in messages %}
+    <div class="flash {{ category }}">{{ message }}</div>
+  {% endfor %}</div>{% endif %}
+{% endwith %}
+
+<section class="metric-grid">
+  <article class="metric"><span>Total scans</span><strong>{{ total }}</strong><small>All saved manual scans</small></article>
+  <article class="metric"><span>Suspicious records</span><strong>{{ suspicious }}</strong><small>Rule match or anomaly score ≥ 40</small></article>
+  <article class="metric"><span>Critical detections</span><strong>{{ critical }}</strong><small>Highest severity category</small></article>
+  <article class="metric"><span>Average risk score</span><strong>{{ avg_risk }}<em>/100</em></strong><small>Rule-weight score, capped at 100</small></article>
+</section>
+
+<section class="main-grid">
+  <article class="panel scan-panel">
+    <div class="section-heading"><div><p class="eyebrow">INSPECTION</p><h2>Analyze URL, request, or log</h2></div><span class="live-dot">MANUAL SCAN</span></div>
+    <form method="post" action="{{ url_for('dashboard') }}" class="scan-form">
+      <input type="hidden" name="_csrf_token" value="{{ csrf_token }}">
+      <label for="payload">Input sample</label>
+      <textarea id="payload" name="payload" rows="7" maxlength="12000" required
+        placeholder="Paste a URL, HTTP request, server log line, or suspicious text. Use only authorized test data."></textarea>
+      <div class="form-footer"><small>Maximum 12,000 characters. Input is analyzed as text; it is not executed.</small><button class="button primary" type="submit">Run scan <span>→</span></button></div>
+    </form>
+    {% if result %}
+    <div class="result-card {% if result.severity == 'Critical' %}critical{% elif result.is_suspicious %}warning{% else %}safe{% endif %}">
+      <div class="result-top"><div><p class="eyebrow">SCAN #{{ result.id }} · {{ result.scanned_at }}</p><h3>{{ result.attack_type }}</h3></div><span class="severity {{ result.severity|lower }}">{{ result.severity }}</span></div>
+      <div class="score-grid">
+        <div><span>Rule risk score</span><strong>{{ result.risk_score }}<small>/100</small></strong><div class="meter"><i style="width: {{ result.risk_score }}%"></i></div></div>
+        <div><span>Heuristic anomaly score</span><strong>{{ result.anomaly_score }}<small>/100</small></strong><div class="meter anomaly"><i style="width: {{ result.anomaly_score }}%"></i></div></div>
+      </div>
+      <h4>Detection reasons</h4>
+      <ul class="reason-list">{% for reason in result.indicators %}<li>{{ reason }}</li>{% endfor %}</ul>
+      <p class="notice">Heuristic scores are educational indicators, not calibrated probabilities. A “Low” result does not prove an input is safe.</p>
+    </div>
+    {% endif %}
+  </article>
+
+  <article class="panel chart-panel">
+    <div class="section-heading"><div><p class="eyebrow">OVERVIEW</p><h2>Attack categories</h2></div></div>
+    {% if attack_labels %}<div class="chart-wrap"><canvas id="attackChart" aria-label="Attack category counts"></canvas></div>{% else %}<div class="empty-chart">Run a scan to populate attack statistics.</div>{% endif %}
+    <div class="chart-legend-note">Counts are based on stored scan-result labels. One scan can contain multiple matched rules.</div>
+  </article>
+</section>
+
+<section class="chart-grid">
+  <article class="panel"><div class="section-heading"><div><p class="eyebrow">SEVERITY</p><h2>Severity distribution</h2></div></div><div class="chart-wrap small"><canvas id="severityChart" aria-label="Severity distribution"></canvas></div></article>
+  <article class="panel"><div class="section-heading"><div><p class="eyebrow">TREND</p><h2>Daily scan activity</h2></div></div><div class="chart-wrap small"><canvas id="dailyChart" aria-label="Daily scans and suspicious records"></canvas></div></article>
+</section>
+
+<section class="panel history-panel">
+  <div class="section-heading history-heading"><div><p class="eyebrow">INVESTIGATION</p><h2>Recent scan history</h2></div><span class="muted">Latest 25 records</span></div>
+  <div class="filters"><input id="historySearch" type="search" placeholder="Filter by input or detection…" aria-label="Filter scan history"><select id="severityFilter" aria-label="Filter by severity"><option value="">All severities</option><option>Critical</option><option>High</option><option>Medium</option><option>Low</option></select></div>
+  <div class="table-wrap"><table id="scanTable"><thead><tr><th>ID</th><th>Input sample</th><th>Detection</th><th>Severity</th><th>Risk</th><th>Anomaly</th><th>Time</th><th>Action</th></tr></thead><tbody>
+  {% for x in scans %}
+    <tr data-search="{{ (x.input_text ~ ' ' ~ x.attack_type)|lower }}" data-severity="{{ x.severity }}">
+      <td class="mono">#{{ x.id }}</td><td class="input-cell" title="{{ x.input_text }}">{{ x.input_text|truncate(65, True, '…') }}</td>
+      <td>{{ x.attack_type }}</td><td><span class="severity {{ x.severity|lower }}">{{ x.severity }}</span></td>
+      <td><span class="score-pill">{{ x.risk_score }}/100</span></td><td><span class="score-pill">{{ x.anomaly_score }}/100</span></td><td class="muted nowrap">{{ x.scanned_at }}</td>
+      <td><form method="post" action="{{ url_for('delete_scan', scan_id=x.id) }}" onsubmit="return confirm('Delete this scan record?');"><input type="hidden" name="_csrf_token" value="{{ csrf_token }}"><button class="text-button danger-text" type="submit">Delete</button></form></td>
+    </tr>
+  {% else %}<tr><td colspan="8" class="empty-row">No scans yet. Submit a sample above to start collecting statistics.</td></tr>{% endfor %}
+  </tbody></table></div>
+  <p id="noMatches" class="empty-row" hidden>No records match these filters.</p>
+</section>
+
+<section class="disclaimer"><strong>Scope note:</strong> This version scans text manually submitted by a user. It does not capture live network packets, monitor a production server, block requests, or prove that an event is malicious. The anomaly score is rule-based/heuristic, not a trained machine-learning model.</section>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+const attackLabels = {{ attack_labels|tojson }};
+const attackValues = {{ attack_values|tojson }};
+const severityLabels = {{ severity_labels|tojson }};
+const severityValues = {{ severity_values|tojson }};
+const dailyRows = {{ daily|tojson }};
+const chartText = '#cbd5e1';
+const chartGrid = 'rgba(148,163,184,.15)';
+Chart.defaults.color = chartText;
+Chart.defaults.font.family = 'Inter, system-ui, sans-serif';
+if (document.getElementById('attackChart')) {
+  new Chart(document.getElementById('attackChart'), {
+    type: 'bar',
+    data: { labels: attackLabels, datasets: [{ label: 'Scans', data: attackValues, backgroundColor: '#38bdf8', borderRadius: 6, maxBarThickness: 34 }] },
+    options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { beginAtZero: true, grid: { color: chartGrid }, ticks: { precision: 0 } }, y: { grid: { display: false } } } }
+  });
+}
+if (document.getElementById('severityChart')) {
+  new Chart(document.getElementById('severityChart'), {
+    type: 'doughnut',
+    data: { labels: severityLabels, datasets: [{ data: severityValues, backgroundColor: ['#22c55e','#facc15','#fb923c','#f43f5e'], borderColor: '#111827', borderWidth: 3 }] },
+    options: { responsive: true, maintainAspectRatio: false, cutout: '65%', plugins: { legend: { position: 'bottom' } } }
+  });
+}
+if (document.getElementById('dailyChart')) {
+  new Chart(document.getElementById('dailyChart'), {
+    type: 'line',
+    data: { labels: dailyRows.map(x => x.day), datasets: [
+      { label: 'Total scans', data: dailyRows.map(x => x.total), borderColor: '#38bdf8', backgroundColor: 'rgba(56,189,248,.12)', fill: true, tension: .3 },
+      { label: 'Suspicious', data: dailyRows.map(x => x.suspicious || 0), borderColor: '#fb7185', backgroundColor: 'rgba(251,113,133,.08)', fill: true, tension: .3 }
+    ]},
+    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } }, scales: { x: { grid: { color: chartGrid } }, y: { beginAtZero: true, grid: { color: chartGrid }, ticks: { precision: 0 } } } }
+  });
+}
+const searchInput = document.getElementById('historySearch');
+const severitySelect = document.getElementById('severityFilter');
+function filterRows() {
+  const query = searchInput.value.toLowerCase();
+  const severity = severitySelect.value;
+  let visible = 0;
+  document.querySelectorAll('#scanTable tbody tr[data-search]').forEach(row => {
+    const show = row.dataset.search.includes(query) && (!severity || row.dataset.severity === severity);
+    row.hidden = !show;
+    if (show) visible++;
+  });
+  document.getElementById('noMatches').hidden = visible > 0;
+}
+searchInput.addEventListener('input', filterRows);
+severitySelect.addEventListener('change', filterRows);
+</script>
+{% endblock %}
